@@ -2,7 +2,7 @@ import streamlit as st
 from openai import OpenAI
 from supabase import create_client
 import os
-import json
+import uuid
 from datetime import datetime
 
 # --- 1. CONFIGURATION ---
@@ -19,10 +19,25 @@ client = OpenAI(
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- 2. DATABASE FUNCTIONS ---
-def load_chat_history():
-    """Load chat history from Supabase"""
+def get_all_chats():
+    """Get all unique chat sessions"""
     try:
-        response = supabase.table("chat_history").select("*").order("created_at", desc=False).execute()
+        response = supabase.table("chat_history").select("chat_id, created_at, content").order("created_at", desc=True).execute()
+        chats = {}
+        for row in response.data:
+            chat_id = row.get("chat_id", "default")
+            if chat_id not in chats:
+                # Use first message as title preview
+                preview = row["content"][:30] + "..." if len(row["content"]) > 30 else row["content"]
+                chats[chat_id] = {"preview": preview, "created_at": row["created_at"]}
+        return chats
+    except Exception as e:
+        return {}
+
+def load_chat_history(chat_id: str):
+    """Load chat history for a specific chat from Supabase"""
+    try:
+        response = supabase.table("chat_history").select("*").eq("chat_id", chat_id).order("created_at", desc=False).execute()
         messages = []
         for row in response.data:
             messages.append({"role": row["role"], "content": row["content"]})
@@ -31,10 +46,11 @@ def load_chat_history():
         st.sidebar.warning(f"Could not load history: {e}")
         return []
 
-def save_message(role: str, content: str):
+def save_message(chat_id: str, role: str, content: str):
     """Save a message to Supabase"""
     try:
         supabase.table("chat_history").insert({
+            "chat_id": chat_id,
             "role": role,
             "content": content,
             "created_at": datetime.now().isoformat()
@@ -42,19 +58,19 @@ def save_message(role: str, content: str):
     except Exception as e:
         st.sidebar.warning(f"Could not save message: {e}")
 
-def clear_chat_history():
-    """Delete all chat history from Supabase"""
+def delete_chat(chat_id: str):
+    """Delete a specific chat session"""
     try:
-        supabase.table("chat_history").delete().neq("id", 0).execute()
+        supabase.table("chat_history").delete().eq("chat_id", chat_id).execute()
     except Exception as e:
-        st.sidebar.warning(f"Could not clear history: {e}")
+        st.sidebar.warning(f"Could not delete chat: {e}")
 
 # --- 3. PAGE CONFIG ---
 st.set_page_config(
     page_title="Aman's Assistant",
     page_icon="🦣",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # --- 4. CUSTOM CSS (Grok-inspired dark theme) ---
@@ -221,30 +237,92 @@ st.markdown("""
     .stSpinner > div {
         border-color: #667eea transparent transparent transparent !important;
     }
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0d0d0d 0%, #1a1a2e 100%) !important;
+    }
+    
+    [data-testid="stSidebar"] .stButton button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 10px !important;
+    }
+    
+    /* Chat history items */
+    .chat-item {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .chat-item:hover {
+        background: rgba(102, 126, 234, 0.2);
+        border-color: rgba(102, 126, 234, 0.4);
+    }
+    
+    .chat-item.active {
+        background: rgba(102, 126, 234, 0.3);
+        border-color: #667eea;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 5. UI HEADER ---
-st.title("🦣 Aman's Assistant")
-st.markdown('<p class="subtitle">Powered by Llama 3.3 • Lightning fast responses ⚡</p>', unsafe_allow_html=True)
-
-# --- 6. CHAT STATE (Load from database) ---
+# --- 5. SESSION STATE INITIALIZATION ---
+if "current_chat_id" not in st.session_state:
+    st.session_state.current_chat_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
-    st.session_state.messages = load_chat_history()
-if "history_loaded" not in st.session_state:
-    st.session_state.history_loaded = True
+    st.session_state.messages = []
 
-# --- SIDEBAR: Chat Controls ---
+# --- SIDEBAR: Chat Management ---
 with st.sidebar:
-    st.markdown("### 💬 Chat Controls")
+    st.markdown("### 🦣 Aman's Assistant")
+    st.markdown("---")
     
-    # Clear chat button
-    if st.button("🗑️ Clear Chat", use_container_width=True):
-        clear_chat_history()
+    # New Chat button
+    if st.button("✨ New Chat", use_container_width=True, type="primary"):
+        st.session_state.current_chat_id = str(uuid.uuid4())
         st.session_state.messages = []
         st.rerun()
     
-    # Download chat button
+    st.markdown("---")
+    st.markdown("### 📜 Chat History")
+    
+    # Get all chats
+    all_chats = get_all_chats()
+    
+    if all_chats:
+        for chat_id, chat_info in all_chats.items():
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                # Make chat selectable
+                is_current = chat_id == st.session_state.current_chat_id
+                label = f"{'▶ ' if is_current else ''}{chat_info['preview']}"
+                if st.button(label, key=f"chat_{chat_id}", use_container_width=True):
+                    st.session_state.current_chat_id = chat_id
+                    st.session_state.messages = load_chat_history(chat_id)
+                    st.rerun()
+            
+            with col2:
+                # Delete button
+                if st.button("🗑️", key=f"del_{chat_id}", help="Delete this chat"):
+                    delete_chat(chat_id)
+                    if chat_id == st.session_state.current_chat_id:
+                        st.session_state.current_chat_id = str(uuid.uuid4())
+                        st.session_state.messages = []
+                    st.rerun()
+    else:
+        st.markdown("*No chat history yet*")
+    
+    st.markdown("---")
+    
+    # Download current chat
     if st.session_state.messages:
         chat_text = ""
         for msg in st.session_state.messages:
@@ -258,9 +336,10 @@ with st.sidebar:
             mime="text/plain",
             use_container_width=True
         )
-    
-    st.markdown("---")
-    st.markdown(f"*💾 {len(st.session_state.messages)} messages saved*")
+
+# --- 6. UI HEADER ---
+st.title("🦣 Aman's Assistant")
+st.markdown('<p class="subtitle">Powered by Llama 3.3 • Lightning fast responses ⚡</p>', unsafe_allow_html=True)
 
 # Display chat history
 for message in st.session_state.messages:
@@ -271,7 +350,7 @@ for message in st.session_state.messages:
 if prompt := st.chat_input("Ask me anything..."):
     # Save and display user message
     st.session_state.messages.append({"role": "user", "content": prompt})
-    save_message("user", prompt)
+    save_message(st.session_state.current_chat_id, "user", prompt)
     
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -290,7 +369,7 @@ if prompt := st.chat_input("Ask me anything..."):
             
             # Save and store assistant response
             st.session_state.messages.append({"role": "assistant", "content": response})
-            save_message("assistant", response)
+            save_message(st.session_state.current_chat_id, "assistant", response)
         
         except Exception as e:
             st.error(f"⚠️ {e}")
