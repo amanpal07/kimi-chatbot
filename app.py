@@ -7,9 +7,16 @@ from datetime import datetime
 import time
 
 # --- 1. CONFIGURATION ---
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://cfsnpkuenfhdttsunknd.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmc25wa3VlbmZoZHR0c3Vua25kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NjY5MDUsImV4cCI6MjA4NjA0MjkwNX0.bv0QELFBOwhB1wJKvCL_iDHqrKJClbS1YJJcoLOG3rA")
+# Try Streamlit secrets first, then environment variables
+def get_secret(key, default=None):
+    try:
+        return st.secrets.get(key, os.environ.get(key, default))
+    except:
+        return os.environ.get(key, default)
+
+GROQ_API_KEY = get_secret("GROQ_API_KEY")
+SUPABASE_URL = get_secret("SUPABASE_URL", "https://cfsnpkuenfhdttsunknd.supabase.co")
+SUPABASE_KEY = get_secret("SUPABASE_KEY")
 
 # Initialize clients
 client = OpenAI(
