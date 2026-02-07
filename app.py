@@ -1,16 +1,55 @@
 import streamlit as st
 from openai import OpenAI
+from supabase import create_client
 import os
+import json
+from datetime import datetime
 
 # --- 1. CONFIGURATION ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://cfsnpkuenfhdttsunknd.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmc25wa3VlbmZoZHR0c3Vua25kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NjY5MDUsImV4cCI6MjA4NjA0MjkwNX0.bv0QELFBOwhB1wJKvCL_iDHqrKJClbS1YJJcoLOG3rA")
 
+# Initialize clients
 client = OpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1",
 )
 
-# --- 2. PAGE CONFIG ---
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- 2. DATABASE FUNCTIONS ---
+def load_chat_history():
+    """Load chat history from Supabase"""
+    try:
+        response = supabase.table("chat_history").select("*").order("created_at", desc=False).execute()
+        messages = []
+        for row in response.data:
+            messages.append({"role": row["role"], "content": row["content"]})
+        return messages
+    except Exception as e:
+        st.sidebar.warning(f"Could not load history: {e}")
+        return []
+
+def save_message(role: str, content: str):
+    """Save a message to Supabase"""
+    try:
+        supabase.table("chat_history").insert({
+            "role": role,
+            "content": content,
+            "created_at": datetime.now().isoformat()
+        }).execute()
+    except Exception as e:
+        st.sidebar.warning(f"Could not save message: {e}")
+
+def clear_chat_history():
+    """Delete all chat history from Supabase"""
+    try:
+        supabase.table("chat_history").delete().neq("id", 0).execute()
+    except Exception as e:
+        st.sidebar.warning(f"Could not clear history: {e}")
+
+# --- 3. PAGE CONFIG ---
 st.set_page_config(
     page_title="Aman's Assistant",
     page_icon="🦣",
@@ -18,7 +57,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 3. CUSTOM CSS (Grok-inspired dark theme) ---
+# --- 4. CUSTOM CSS (Grok-inspired dark theme) ---
 st.markdown("""
 <style>
     /* Import modern font */
@@ -185,13 +224,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 4. UI HEADER ---
+# --- 5. UI HEADER ---
 st.title("🦣 Aman's Assistant")
 st.markdown('<p class="subtitle">Powered by Llama 3.3 • Lightning fast responses ⚡</p>', unsafe_allow_html=True)
 
-# --- 5. CHAT STATE ---
+# --- 6. CHAT STATE (Load from database) ---
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = load_chat_history()
+if "history_loaded" not in st.session_state:
+    st.session_state.history_loaded = True
 
 # --- SIDEBAR: Chat Controls ---
 with st.sidebar:
@@ -199,6 +240,7 @@ with st.sidebar:
     
     # Clear chat button
     if st.button("🗑️ Clear Chat", use_container_width=True):
+        clear_chat_history()
         st.session_state.messages = []
         st.rerun()
     
@@ -218,16 +260,19 @@ with st.sidebar:
         )
     
     st.markdown("---")
-    st.markdown("*Chat history is saved during your session. Download to keep it!*")
+    st.markdown(f"*💾 {len(st.session_state.messages)} messages saved*")
 
 # Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- 6. CHAT LOGIC ---
+# --- 7. CHAT LOGIC ---
 if prompt := st.chat_input("Ask me anything..."):
+    # Save and display user message
     st.session_state.messages.append({"role": "user", "content": prompt})
+    save_message("user", prompt)
+    
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -242,7 +287,10 @@ if prompt := st.chat_input("Ask me anything..."):
                 stream=True,
             )
             response = st.write_stream(stream)
+            
+            # Save and store assistant response
             st.session_state.messages.append({"role": "assistant", "content": response})
+            save_message("assistant", response)
         
         except Exception as e:
             st.error(f"⚠️ {e}")
