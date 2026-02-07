@@ -193,6 +193,33 @@ st.markdown('<p class="subtitle">Powered by Llama 3.3 • Lightning fast respons
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# --- SIDEBAR: Chat Controls ---
+with st.sidebar:
+    st.markdown("### 💬 Chat Controls")
+    
+    # Clear chat button
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+    
+    # Download chat button
+    if st.session_state.messages:
+        chat_text = ""
+        for msg in st.session_state.messages:
+            role = "You" if msg["role"] == "user" else "Aman's Assistant"
+            chat_text += f"{role}:\n{msg['content']}\n\n"
+        
+        st.download_button(
+            label="📥 Download Chat",
+            data=chat_text,
+            file_name="chat_history.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+    
+    st.markdown("---")
+    st.markdown("*Chat history is saved during your session. Download to keep it!*")
+
 # Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
